@@ -18,9 +18,9 @@ def load_binding_data(filename="class2_data.csv"):
     bad_mhc = ~df.mhc.str.contains("\*")
     print("Dropping %d rows without full alleles" % bad_mhc.sum())
     df = df[~bad_mhc]
-    no_units = df.units.isnull()
-    print("Dropping %d rows without units" % no_units.sum())
-    df = df[~no_units]
+    # no_units = df.units.isnull()
+    # print("Dropping %d rows without units" % no_units.sum())
+    # df = df[~no_units]
     return df
 
 def from_ic50(ic50):
@@ -44,26 +44,34 @@ def load_hits(filename=None):
         hits[allele] = [
             s.upper() for s in df[allele]
             if isinstance(s, str) and len(s) > 0 and "X" not in s]
-        print("Loaded %d hits for %s" % (len(hits[allele]), allele))
+        print("Loaded %d hits for %s (max length %d)" % (
+            len(hits[allele]),
+            allele,
+            max(len(p) for p in hits[allele])))
     return hits
 
 def main():
     mhc = SequenceInput(
         length=34, name="mhc", encoding="index", variable_length=True,
-        dense_layer_sizes=[32])
+        dense_layer_sizes=[32],
+        dense_activation="sigmoid",
+        dense_dropout=0.1)
+
     peptide = SequenceInput(
         length=50, name="peptide", encoding="index", variable_length=True,
         conv_filter_sizes=[9],
         conv_output_dim=8,
         n_conv_layers=2,
         global_pooling=True,
-        dense_layer_sizes=[32])
+        dense_layer_sizes=[32],
+        dense_activation="tanh",
+        dense_dropout=0.1)
+
     mhc_pseudosequences_dict = load_pseudosequences()
 
     df = load_binding_data()
 
     # Load mass spec hits
-
     hits = load_hits()
     print(hits.keys())
     hit_peptides = []
@@ -86,7 +94,7 @@ def main():
     df["output_name"] = df["assay_group"] + ":" + df["assay_method"]
     output_counts = df.output_name.value_counts()
 
-    sufficiently_large_output_counts = output_counts[output_counts >= 25000]
+    sufficiently_large_output_counts = output_counts[output_counts >= 200]
 
     sufficiently_large_output_names = set(sufficiently_large_output_counts.index)
     df_subset = df[df.output_name.isin(sufficiently_large_output_names)]
@@ -110,8 +118,7 @@ def main():
             name=output_name,
             transform=transform,
             inverse_transform=inverse,
-            activation=activation,
-            mask_negative=True)
+            activation=activation)
         print(output)
         outputs.append(output)
     predictor = Predictor(
@@ -134,15 +141,15 @@ def main():
     output_name_index_dict = {output_name: i for i, output_name in enumerate(output_name_list)}
     n_outputs = len(output_name_list)
 
-    output_is_qual_dict = {
+    output_is_quantitative_dict = {
         output_name: any([(substr in output_name) for substr in ("IC50", "EC50", "half life")])
         for output_name in output_name_list
     }
 
-    print(output_is_qual_dict)
+    print(output_is_quantitative_dict)
 
-    sums = np.zeros((n_unique_pmhc, n_outputs), dtype="float32")
-    counts = np.zeros_like(sums, dtype="int32")
+    sums = np.zeros((n_unique_pmhc, n_outputs), dtype="float64")
+    counts = np.zeros_like(sums, dtype="float64")
 
     for (output_name, peptide, mhc, qual, meas) in zip(
             df_subset.output_name, df_subset.peptide, df_subset.mhc,
@@ -150,7 +157,7 @@ def main():
         row_idx = pmhc_index_dict[(peptide, mhc)]
         col_idx = output_name_index_dict[output_name]
         counts[row_idx, col_idx] += 1
-        if output_is_qual_dict[output_name]:
+        if output_is_quantitative_dict[output_name]:
             sums[row_idx, col_idx] += np.log(1 + meas)
         else:
             sums[row_idx, col_idx] += qual.startswith("Positive")
@@ -158,10 +165,10 @@ def main():
     averages = sums / counts
 
     for name, col_idx in output_name_index_dict.items():
-        if output_is_qual_dict[name]:
-            averages[:, col_idx] = averages[:, col_idx] > 0.5
-        else:
+        if output_is_quantitative_dict[name]:
             averages[:, col_idx] = np.exp(averages[:, col_idx]) - 1
+        else:
+            averages[:, col_idx] = averages[:, col_idx] > 0.5
 
     averages[counts == 0] = np.nan
 
@@ -172,15 +179,25 @@ def main():
     mhc_inputs = [
         mhc_pseudosequences_dict[mhc_name] for mhc_name in normalized_mhc_names]
 
-    predictor.fit({"peptide": peptides, "mhc": mhc_inputs}, averages, epochs=1)
+    predictor.fit({"peptide": peptides, "mhc": mhc_inputs}, averages, epochs=5)
     y = predictor.predict({"peptide": peptides, "mhc": mhc_inputs})
-    print(y)
+
+    hit_peptides.append("SFYQQQLML")
+    hit_mhc_seqs.append(hit_mhc_seqs[-1])
 
     y_dict = predictor.predict({"peptide": hit_peptides, "mhc": hit_mhc_seqs})
+
     y = y_dict[outputs[0].name]
+
+    print(y)
+
     print("min=%0.4f, %0.4f/%0.4f/%0.4f, max=%0.4f" % (
-        y.min(), np.percentile(y, 25), np.percentile(y, 50), np.percentile(y, 75),
+        y.min(),
+        np.percentile(y, 25),
+        np.percentile(y, 50),
+        np.percentile(y, 75),
         y.max()))
+
     np.save("pred.npy", y)
 
 if __name__ == "__main__":
