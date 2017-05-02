@@ -4,7 +4,7 @@ import numpy as np
 
 from sklearn.model_selection import LeaveOneGroupOut
 from keras.callbacks import LearningRateScheduler
-
+from keras.optimizers import RMSprop
 
 from helpers import to_ic50, from_ic50
 from data import (
@@ -15,12 +15,20 @@ from callback_auc import CallbackAUC
 
 from seaborn import plt
 
+
 N_EPOCHS = 10
 TRAINING_DECOY_FACTOR = 8
 DECOY_WEIGHT_FOR_QUANTITATIVE_ASSAYS = 0.01
 TEST_DECOY_FACTOR = 99
 MASS_SPEC_OUTPUT_NAME = "neon mass spec"
 BATCH_SIZE = 32
+
+INITIAL_LEARNING_RATE = RMSprop().lr.get_value() * 1.25
+print(INITIAL_LEARNING_RATE)
+LEARNING_DECAY_RATE = 0.9
+
+LOSS = "mse"   # "binary_crossentropy"
+MERGE = "multiply"
 
 def make_model(output_names):
     mhc = SequenceInput(
@@ -36,7 +44,7 @@ def make_model(output_names):
         dense_dropout=0.15)
 
     peptide = SequenceInput(
-        length=44,
+        length=45,
         name="peptide",
         encoding="index",
         add_start_tokens=True,
@@ -44,9 +52,9 @@ def make_model(output_names):
         embedding_dim=32,
         embedding_mask_zero=True,
         variable_length=True,
-        conv_filter_sizes=[1, 3, 6, 9, 12],
-        conv_activation="tanh",
-        conv_output_dim={1: 4, 3: 4, 6: 4, 9: 20, 12: 4},
+        conv_filter_sizes=[9],
+        conv_activation="relu",
+        conv_output_dim=32,
         conv_dropout=0.25,
         conv_batch_normalization=True,
         n_conv_layers=2,
@@ -77,13 +85,14 @@ def make_model(output_names):
             name=output_name,
             transform=transform,
             inverse_transform=inverse,
-            activation=activation)
+            activation=activation,
+            loss=LOSS)
         print(output)
         outputs.append(output)
     return Predictor(
         inputs=[mhc, peptide],
         outputs=outputs,
-        merge_mode="multiply",
+        merge_mode=MERGE,
         training_metrics=["accuracy"])
 
 def plot_aucs(test_name, train_aucs, test_aucs):
@@ -96,7 +105,7 @@ def plot_aucs(test_name, train_aucs, test_aucs):
     plt.xlabel("epoch")
     plt.ylabel("AUC")
     plt.xlim(0, 15)
-    plt.ylim(0.0, 1.0)
+    plt.ylim(0.5, 1.0)
     plt.legend(["train", "test (%s)" % test_name])
     fig.savefig("auc_%s.png" % test_name)
 
@@ -141,6 +150,11 @@ def shuffle_data(peptides, alleles, Y, weights):
     Y = Y[shuffle_indices]
     weights = weights[shuffle_indices]
     return peptides, alleles, Y, weights
+
+def learning_rate_schedule(epoch):
+    lr = INITIAL_LEARNING_RATE * LEARNING_DECAY_RATE ** epoch
+    print("-- setting learning rate for epoch %d to %f" % (epoch, lr))
+    return lr
 
 def main():
     mhc_pseudosequences_dict = load_pseudosequences()
@@ -246,7 +260,7 @@ def main():
         callbacks = [
             train_auc_callback,
             test_auc_callback,
-            LearningRateScheduler(lambda e: 0.6 ** e * 0.005)
+            LearningRateScheduler(learning_rate_schedule)
         ]
 
         predictor.fit(
