@@ -29,6 +29,10 @@ LEARNING_DECAY_RATE = 0.9
 
 LOSS = "mse"   # "binary_crossentropy"
 MERGE = "multiply"
+CONV_DROPOUT = 0.25
+CONV_BATCH_NORMALIZATION = True
+MERGE_DROPOUT = 0
+MERGE_BATCH_NORMALIZATION = False
 
 def make_model(output_names):
     mhc = SequenceInput(
@@ -40,8 +44,8 @@ def make_model(output_names):
         embedding_mask_zero=False,
         dense_layer_sizes=[32],
         dense_activation="tanh",
-        dense_batch_normalization=True,
-        dense_dropout=0.15)
+        dense_batch_normalization=MERGE_BATCH_NORMALIZATION,
+        dense_dropout=MERGE_DROPOUT)
 
     peptide = SequenceInput(
         length=45,
@@ -55,8 +59,8 @@ def make_model(output_names):
         conv_filter_sizes=[9],
         conv_activation="relu",
         conv_output_dim=32,
-        conv_dropout=0.25,
-        conv_batch_normalization=True,
+        conv_dropout=CONV_DROPOUT,
+        conv_batch_normalization=CONV_BATCH_NORMALIZATION,
         n_conv_layers=2,
         # conv_weight_source=mhc,
         global_pooling=True,
@@ -64,8 +68,8 @@ def make_model(output_names):
         global_pooling_dropout=0.25,
         dense_layer_sizes=[32],
         dense_activation="sigmoid",
-        dense_batch_normalization=True,
-        dense_dropout=0.15)
+        dense_batch_normalization=MERGE_BATCH_NORMALIZATION,
+        dense_dropout=MERGE_DROPOUT)
 
     outputs = []
     for output_name in output_names:
