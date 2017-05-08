@@ -6,7 +6,7 @@ from sklearn.model_selection import LeaveOneGroupOut
 from keras.callbacks import LearningRateScheduler
 from keras.optimizers import RMSprop
 
-from helpers import to_ic50, from_ic50
+from helpers import to_ic50, from_ic50, shuffle_data
 from data import (
     load_mass_spec_hits,
     generate_negatives_from_proteome,
@@ -140,20 +140,6 @@ def augment_with_decoys(
     weights[:n_hits] = hit_weights
     weights[n_hits:] = min(1.0, hits_to_decoys)
     return mass_spec_peptides, mass_spec_mhc_alleles, Y_mass_spec, weights
-
-def shuffle_data(peptides, alleles, Y, weights):
-    n = len(peptides)
-    assert len(alleles) == n
-    assert len(Y) == n
-    assert len(weights) == n
-    # shuffle training set
-    shuffle_indices = np.arange(n)
-    np.random.shuffle(shuffle_indices)
-    peptides = [peptides[i] for i in shuffle_indices]
-    alleles = [alleles[i] for i in shuffle_indices]
-    Y = Y[shuffle_indices]
-    weights = weights[shuffle_indices]
-    return peptides, alleles, Y, weights
 
 def learning_rate_schedule(epoch):
     lr = INITIAL_LEARNING_RATE * LEARNING_DECAY_RATE ** epoch
